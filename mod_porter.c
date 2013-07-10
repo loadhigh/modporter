@@ -143,7 +143,7 @@ int porter_should_rewrite_body(request_rec *r, porter_server_conf *config)
   {
     const char *content_type   = apr_table_get(r->headers_in, "Content-Type");
     const char *content_length = apr_table_get(r->headers_in, "Content-Length");
-    if (content_type && strcasecmp(content_type, "multipart/form-data") > 0 && atol(content_length) > config->minimum_multipart_size)
+    if (content_type && strcasecmp(content_type, "multipart/form-data") == 0 && atol(content_length) > config->minimum_multipart_size)
     {
       return 1;
     }
