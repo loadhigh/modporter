@@ -3,5 +3,4 @@
 - http://people.apache.org/~bojan/libapreq2-2.10-RC1.tar.gz
 
 2. Install mod_porter
-  
-  - Just type 'rake' from mod_porter directory
+  - Just type 'nmake' on windows or 'rake' on the other platforms from mod_porter directory

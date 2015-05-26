@@ -16,6 +16,10 @@
 #include <http_core.h>
 #include <http_config.h>
 #include <http_log.h>
+#ifdef WIN32
+#include <http_protocol.h>
+#include <http_request.h>
+#endif
 #include <apr_strings.h>
 #include <apr_sha1.h>
 #include <apreq_util.h>
@@ -110,9 +114,12 @@ static apr_status_t porter_input_filter(ap_filter_t *f, apr_bucket_brigade *bb,
 static int porter_fixup(request_rec *r)
 {
   apr_status_t rv;
+  porter_server_conf *config;
+  int http_status;
+
   apr_table_setn(r->headers_in, HTTP_X_UPLOADS, NULL);
 
-  porter_server_conf *config = (porter_server_conf *)ap_get_module_config(r->server->module_config, &porter_module);
+  config = (porter_server_conf *)ap_get_module_config(r->server->module_config, &porter_module);
 
   if(!config->enabled)
   {
@@ -120,7 +127,7 @@ static int porter_fixup(request_rec *r)
     return DECLINED;
   }
 
-  int http_status = ap_setup_client_block(r, REQUEST_CHUNKED_ERROR);
+  http_status = ap_setup_client_block(r, REQUEST_CHUNKED_ERROR);
   if (http_status != OK) {
     return http_status;
   }
@@ -273,6 +280,7 @@ apr_status_t porter_handle_upload(porter_upload_request_t *ur, apreq_param_t *p)
   const char *file_name;
   const char *content_type;
   const char *signature;
+  porter_server_conf *config;
 
   apr_size_t size;
   apr_status_t rv;
@@ -285,7 +293,7 @@ apr_status_t porter_handle_upload(porter_upload_request_t *ur, apreq_param_t *p)
   PORTER_LOG("Handling Upload");
   PORTER_LOG(p->v.name);
 
-  porter_server_conf *config = (porter_server_conf *)ap_get_module_config(ur->raw_request->server->module_config, &porter_module);
+  config = (porter_server_conf *)ap_get_module_config(ur->raw_request->server->module_config, &porter_module);
 
   content_disposition = apr_table_get(info, "content-disposition");
   apreq_header_attribute(content_disposition, "filename", 8, &file_name, &size);
@@ -316,8 +324,12 @@ apr_status_t porter_handle_upload(porter_upload_request_t *ur, apreq_param_t *p)
   // Write the actual upload to disk
   PORTER_HANDLE_ERROR(porter_stream_file_to_disk(pool, p, &finfo, config->directory));
 
-  // Set appropriate tempfile permissions
+#ifdef WIN32
+  // setting file permission is not implemented in APR for windows, default file permissions work fine.
+#else
+   // Set appropriate tempfile permissions
   PORTER_HANDLE_ERROR(apr_file_perms_set(finfo.fname, config->permission));
+#endif
 
   PORTER_HANDLE_ERROR(porter_append_sub_parameter(pool, ur->bucket_brigade, escaped_key, "path", finfo.fname, strlen(finfo.fname)));
 
@@ -331,10 +343,13 @@ apr_status_t porter_handle_upload(porter_upload_request_t *ur, apreq_param_t *p)
 // Returns the base64 hash of the temp file's name and PorterSharedSecret.
 char *porter_sign_filename(porter_upload_request_t *ur, apr_finfo_t *finfo)
 {
-  PORTER_LOG("Signing Filename");
-  const char *value_to_hash = apr_pstrcat(ur->pool, finfo->fname, ur->secret, NULL);
+  const char *value_to_hash;
+  char *hash;
 
-  char *hash = apr_palloc(ur->pool, 100 * sizeof(char));
+  PORTER_LOG("Signing Filename");
+  value_to_hash = apr_pstrcat(ur->pool, finfo->fname, ur->secret, NULL);
+
+  hash = apr_palloc(ur->pool, 100 * sizeof(char));
 
   apr_sha1_base64(value_to_hash, strlen(value_to_hash), hash);
   PORTER_LOG(hash);
