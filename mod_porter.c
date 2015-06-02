@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <httpd.h>
 #include <http_core.h>
 #include <http_config.h>
 #include <http_log.h>
@@ -42,8 +43,6 @@
     return rv;                \
   }
 
-
-
 AP_DECLARE_DATA ap_filter_rec_t *porter_input_filter_handle;
 
 typedef struct porter_upload_request_t {
@@ -62,6 +61,7 @@ typedef struct porter_server_conf {
   const char *secret;
   apr_fileperms_t permission;
   const char *directory;
+  const char *url_filter;
 } porter_server_conf;
 
 extern module AP_MODULE_DECLARE_DATA porter_module;
@@ -82,7 +82,8 @@ apr_status_t porter_append_sub_parameter(apr_pool_t *pool, apr_bucket_brigade *b
 porter_upload_request_t* porter_create_request(apreq_handle_t *req,
                                       request_rec *raw_request,
                                       porter_server_conf *config);
-                                     
+int regex_matches(apr_pool_t *p, const char *str, const char *pattern);
+
 // This input filter handles the job of rewriting the request, it's injected at
 // runtime by the porter fixup filter.  All it does is remove itself from the
 // filter chain and pass the newly modified content up the filter chain.
@@ -140,19 +141,25 @@ static int porter_fixup(request_rec *r)
   return DECLINED;
 }
 
-
 // Determines whether or not porter should apply.  Return true if the content
 // type is multipart/form-data and the content length is greater than
-// PorterMinSize.
+// PorterMinSize and request url matches url filter.
 int porter_should_rewrite_body(request_rec *r, porter_server_conf *config)
 {
   if (ap_should_client_block(r))
   {
     const char *content_type   = apr_table_get(r->headers_in, "Content-Type");
     const char *content_length = apr_table_get(r->headers_in, "Content-Length");
+
     if (content_type && strcasecmp(content_type, "multipart/form-data") > 0 && atol(content_length) > config->minimum_multipart_size)
     {
-      return 1;
+      if (config->url_filter)
+      {
+        if (regex_matches(r->pool, r->uri, config->url_filter))
+        {
+          return 1;
+        }
+      }
     }
   }
   return 0;
@@ -425,6 +432,7 @@ static void *porter_create_server_config(apr_pool_t *p, server_rec *s)
   conf->enabled = 0;
   conf->minimum_multipart_size = 0;
   conf->permission = 0x0666;
+  conf->url_filter = NULL;
 
   return conf;
 }
@@ -493,6 +501,20 @@ static const char* porter_set_directory(cmd_parms *cmd, void *dir, const char *a
   return NULL;
 }
 
+static const char* porter_set_url_filter(cmd_parms *cmd, void *dir, const char *argument)
+{
+  porter_server_conf *config = (porter_server_conf *)ap_get_module_config(cmd->server->module_config, &porter_module);
+
+  const char *error = ap_check_cmd_context(cmd, NOT_IN_LIMIT);
+
+  if (error != NULL) {
+    return error;
+  }
+
+  config->url_filter = argument;
+  return NULL;
+}
+
 // FIXME Make sure server doesn't start if PorterSharedSecret is not given and Porter is on
 static const command_rec porter_commands[] = {
   AP_INIT_FLAG("Porter", porter_enable_upload, NULL, RSRC_CONF, "Enable or Disable the module. Default : Off") ,
@@ -500,6 +522,7 @@ static const command_rec porter_commands[] = {
   AP_INIT_TAKE1("PorterSharedSecret", porter_set_shared_secret, NULL, RSRC_CONF, "Set shared secret for signing parameters."),
   AP_INIT_TAKE1("PorterPermission", porter_set_file_permission, NULL, RSRC_CONF, "Set permission for temporary files. Default : 0x0666"),
   AP_INIT_TAKE1("PorterDir", porter_set_directory, NULL, RSRC_CONF, "Set directory for temporary files. Default : default apache tmp directory"),
+  AP_INIT_TAKE1("PorterUrlFilterMatch", porter_set_url_filter, NULL, RSRC_CONF, "Set URL filter."),
   {NULL}
 };
 
@@ -507,6 +530,19 @@ static void porter_register_hooks(apr_pool_t *p)
 {
   porter_input_filter_handle = ap_register_input_filter("PORTER_INPUT_FILTER", porter_input_filter, NULL, AP_FTYPE_RESOURCE);
   ap_hook_fixups(porter_fixup, NULL, NULL, APR_HOOK_MIDDLE);
+}
+
+int regex_matches(apr_pool_t *p, const char *str, const char *pattern)
+{
+  ap_regex_t *preg = ap_pregcomp(p, pattern, AP_REG_EXTENDED | AP_REG_NOSUB);
+  if (preg)
+  {
+    if (ap_regexec(preg, str, 0, NULL, 0) == 0)
+    {
+      return 1;
+    }
+  }
+  return 0;
 }
 
 /* Dispatch list for API hooks */
