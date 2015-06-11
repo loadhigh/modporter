@@ -118,7 +118,7 @@ static int porter_fixup(request_rec *r)
   porter_server_conf *config;
   int http_status;
 
-  apr_table_setn(r->headers_in, HTTP_X_UPLOADS, NULL);
+  apr_table_setn(r->headers_in, HTTP_X_UPLOADS, "");
 
   config = (porter_server_conf *)ap_get_module_config(r->server->module_config, &porter_module);
 
