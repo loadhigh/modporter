@@ -128,6 +128,11 @@ static int porter_fixup(request_rec *r)
     return DECLINED;
   }
 
+  if (!(config->url_filter && regex_matches(r->pool, r->uri, config->url_filter)))
+  {
+    return DECLINED;
+  }
+
   http_status = ap_setup_client_block(r, REQUEST_CHUNKED_ERROR);
   if (http_status != OK) {
     return http_status;
@@ -153,13 +158,7 @@ int porter_should_rewrite_body(request_rec *r, porter_server_conf *config)
 
     if (content_type && strcasecmp(content_type, "multipart/form-data") > 0 && atol(content_length) > config->minimum_multipart_size)
     {
-      if (config->url_filter)
-      {
-        if (regex_matches(r->pool, r->uri, config->url_filter))
-        {
-          return 1;
-        }
-      }
+      return 1;
     }
   }
   return 0;
